@@ -16,6 +16,7 @@ from functools import partial
 matplotlib.use("Qt5Agg")
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureWidget
+from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationBar
 from matplotlib.figure import Figure
 
 
@@ -44,7 +45,7 @@ class GraphWidget(plugin.PluginWidget):
         self.label.setAlignment(Qt.AlignCenter)
         self.widget = FigureWidget(Figure(figsize=(5, 5), dpi=100))
         self.widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
+        self.bar = NavigationBar(self.widget, self)
         self.ax = self.widget.figure.add_subplot(111)  # create an axis
 
         self.thread = SqlThread()
@@ -53,6 +54,7 @@ class GraphWidget(plugin.PluginWidget):
         self.stack.addWidget(self.label)
         self.stack.addWidget(self.widget)
 
+        vlayout.addWidget(self.bar)
         vlayout.addWidget(self.stack)
 
         self.setLayout(vlayout)
