@@ -42,7 +42,7 @@ class SqlThread(QThread):
     """
 
     error = Signal(str)
-    result_ready = Signal()
+    result_ready = Signal()  # TODO rename to result_received
 
     def __init__(self, conn: sqlite3.Connection = None, function: Callable = None):
         """Init a Thread with sqlite connection and callable

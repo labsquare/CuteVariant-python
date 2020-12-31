@@ -8,6 +8,10 @@ from PySide2.QtGui import *
 import matplotlib
 import seaborn as sns
 import matplotlib.pyplot as plt
+import pandas as pd
+
+from cutevariant.gui.sql_thread import SqlThread
+from functools import partial
 
 matplotlib.use("Qt5Agg")
 
@@ -26,6 +30,7 @@ class GraphWidget(plugin.PluginWidget):
 
     """
 
+    LOCATION = plugin.CENTRAL_LOCATION
     ENABLE = True
 
     def __init__(self, conn=None, parent=None):
@@ -33,19 +38,45 @@ class GraphWidget(plugin.PluginWidget):
 
         self.setWindowTitle(self.tr("Columns"))
 
+        self.stack = QStackedWidget()
+
+        self.label = QLabel("Loading")
+        self.label.setAlignment(Qt.AlignCenter)
         self.widget = FigureWidget(Figure(figsize=(5, 5), dpi=100))
         self.widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         self.ax = self.widget.figure.add_subplot(111)  # create an axis
 
+        self.thread = SqlThread()
         vlayout = QVBoxLayout()
-        vlayout.addWidget(self.widget)
+
+        self.stack.addWidget(self.label)
+        self.stack.addWidget(self.widget)
+
+        vlayout.addWidget(self.stack)
 
         self.setLayout(vlayout)
+
+        self.thread.result_ready.connect(self.on_result_received)
+        self.thread.error.connect(self.on_error)
+
+    def on_result_received(self):
+
+        self.ax.clear()
+        sns_plot = sns.histplot(self.thread.results, ax=self.ax)
+
+        self.widget.draw()
+        self.widget.updateGeometry()
+        self.stack.setCurrentIndex(1)
+
+    def on_error(self, message):
+        print("error", message)
+        self.stack.setCurrentIndex(1)
 
     def on_open_project(self, conn):
         """ Overrided from PluginWidget """
         self.conn = conn
+        self.thread.conn = conn
         # self.model.conn = conn
         # self.model.load()
         # self.on_refresh()
@@ -53,18 +84,19 @@ class GraphWidget(plugin.PluginWidget):
     def on_refresh(self):
         """ overrided from PluginWidget """
 
-        q = querybuilder.build_sql_query(
-            fields=["dp"],
+        q = querybuilder.build_full_sql_query(
+            self.conn,
+            fields=["mq", "qual"],
             source=self.mainwindow.state.source,
             filters=self.mainwindow.state.filters,
+            limit=None,
         )
 
-        DP = [i["dp"] for i in self.conn.execute(q).fetchall()]
+        q = q.replace("DISTINCT", "")  # TODO ... params !
 
-        print(DP)
-        # self.ax.plot(range(5), range(5))
-        self.ax.clear()
-        sns_plot = sns.histplot(DP, ax=self.ax, kde=True)
+        func = functools.partial(
+            lambda conn: [i["qual"] for i in conn.execute(q).fetchall()]
+        )
 
-        self.widget.draw()
-        self.widget.updateGeometry()
+        self.thread.start_function(func)
+        self.stack.setCurrentIndex(0)
