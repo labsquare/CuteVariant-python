@@ -17,6 +17,34 @@ from cutevariant.commons import logger, DEFAULT_SELECTION_NAME
 
 LOGGER = logger()
 
+# =================== SELECTION_DIALOG ==========================
+
+
+class SelectionDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.list_view = QListView(self)
+        self.model = None
+
+        self.vlayout = QVBoxLayout(self)
+
+        self.ok_cancel = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self
+        )
+        self.ok_cancel.accepted.connect(self.accept)
+        self.ok_cancel.rejected.connect(self.reject)
+
+        self.vlayout.addWidget(self.list_view)
+        self.vlayout.addWidget(self.ok_cancel)
+
+    def set_model(self, model):
+        self.model = model
+        self.list_view.setModel(self.model)
+
+    def get_chosen_selection(self):
+        return self.model.data(self.list_view.currentIndex())
+
+
 # =================== SELECTION MODEL ===========================
 class SourceModel(QAbstractTableModel):
     """Model to store all selections from SQLite `selections` table.
@@ -202,7 +230,33 @@ class SourceEditorWidget(plugin.PluginWidget):
         self.view.selectionModel().currentRowChanged.connect(
             self.on_current_row_changed
         )
+        # Keep it consistent with other plugins
+        self.toolbar.setIconSize(QSize(16, 16))
         self.toolbar.addAction(FIcon(0xF0453), self.tr("Reload"), self.load)
+
+        self.intersect_act = self.toolbar.addAction(
+            FIcon(0xF0779), self.tr("Intersect"), self.on_set_operation_pressed
+        )
+        self.intersect_act.setData("&")
+        self.difference_act = self.toolbar.addAction(
+            FIcon(0xF077C), self.tr("Difference"), self.on_set_operation_pressed
+        )
+        self.difference_act.setData("-")
+        self.union_act = self.toolbar.addAction(
+            FIcon(0xF0778), self.tr("Union"), self.on_set_operation_pressed
+        )
+        self.union_act.setData("|")
+
+        self.bed_intersect_button = QPushButton(
+            FIcon(0xF0219), self.tr("Intersect with BED file ..."), self
+        )
+        self.bed_intersect_button.clicked.connect(self.create_selection_from_bed)
+        self.bed_intersect_button.setFlat(True)
+        self.toolbar.addWidget(self.bed_intersect_button)
+
+        self.toolbar.addActions(
+            [self.intersect_act, self.difference_act, self.union_act]
+        )
 
     def on_open_project(self, conn):
         self.model.conn = conn
@@ -232,10 +286,13 @@ class SourceEditorWidget(plugin.PluginWidget):
         self.mainwindow.refresh_plugins(sender=self)
 
     def menu_setup(self, locked_selection=False):
-        """Setup popup menu
-        :key locked_selection: Allow to mask edit/remove actions (default False)
-            Used on special selections like the default one (named variants).
-        :type locked_selection: <boolean>
+        """Setup popup menu. Used on special selections like the default one (named variants).
+
+        Args:
+            locked_selection (bool, optional): Allow to mask edit/remove actions. Defaults to False.
+
+        Returns:
+            [QMenu]: [A QMenu where all the actions that can be applied to the selected source]
         """
         menu = QMenu()
 
@@ -324,6 +381,67 @@ class SourceEditorWidget(plugin.PluginWidget):
             )
         else:
             return name
+
+    def on_set_operation_pressed(self):
+        """Triggered when a 'Set operation' action is pressed **in the Toolbar**.
+        Due to the availability of the data, this is not the exact same
+        implementation as self._make_set_operation (though mostly copy-pasted)
+        """
+        action = self.sender()
+        data = action.data()
+        if not data:
+            return
+
+        # Following is a copy-paste from self._make_set_operation
+        selection_name = self.ask_and_check_selection_name()
+        if not selection_name:
+            return
+
+        second_operand = self.ask_for_existing_selection()
+        if not second_operand:
+            return
+
+        # Get the action's internal data to know which set operation to do
+        # See setData()
+        set_operator = action.data()
+
+        # Get the records and extract their database id to build 2 Selections objects
+        # {'id': 2, 'name': 'dqzdezd', 'count': 3, 'query': 'SELECT variants.id ...}
+        # {'id': 1, 'name': 'variants', 'count': 11, 'query': ''}
+        record_1 = self.model.record(self.view.selectionModel().currentIndex())
+        record_2 = self.model.record(self.model.find_record(second_operand))
+
+        ret = command.set_cmd(
+            self.model.conn,
+            selection_name,
+            record_1["name"],
+            record_2["name"],
+            set_operator,
+        )
+        if not ret:
+            QMessageBox.critical(
+                self,
+                self.tr("Error while creating the selection"),
+                self.tr("Error while creating the selection, please check the logs"),
+            )
+            self.mainwindow.status_bar.showMessage(
+                self.tr("Fail to create the selection!")
+            )
+            return
+
+        self.load()
+
+    def ask_for_existing_selection(self):
+        current_selection_name = self.model.record(self.view.currentIndex())["name"]
+        records_names = set(record["name"] for record in self.model.records)
+        records_names.remove(current_selection_name)
+
+        dialog = SelectionDialog()
+        dialog.set_model(QStringListModel(records_names, self))
+        if dialog.exec_() == QDialog.Accepted:
+            return dialog.get_chosen_selection()
+        else:
+            return None
 
     # def save_current_query(self):
     #     """Open a dialog box to save the current query into a selection
