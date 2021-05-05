@@ -258,14 +258,14 @@ class GeneView(QAbstractScrollArea):
         # Draw intron Background
         self._draw_introns(painter)
 
-        # Draw CDS
-        self._draw_cds(painter)
+        # Draw variants
+        self._draw_variants(painter)
 
         # Draw exons
         self._draw_exons(painter)
 
-        # Draw variants
-        self._draw_variants(painter)
+        # Draw CDS
+        self._draw_cds(painter)
 
         painter.end()
 
@@ -464,6 +464,15 @@ class GeneView(QAbstractScrollArea):
         else:
             if self.scale_factor > 1:
                 self.set_scale(self.scale_factor - 0.5)
+
+    def zoom_to_dna_interval(self, start: int, end: int):
+        """Sets the current view bounds to a rect around DNA sequence spanning from start to end
+
+        Args:
+            start (int): DNA start position in the current transcript
+            end (int): DNA end position in the current transcript
+        """
+        pass
 
     def mousePressEvent(self, event: QMouseEvent):
 
