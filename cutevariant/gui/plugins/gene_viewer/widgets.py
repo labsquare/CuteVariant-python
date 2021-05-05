@@ -104,6 +104,10 @@ VARIANT_LOLLIPOP_COLOR_MAP = {
 }
 
 
+MOUSE_GRABBING = 0
+MOUSE_EXON_SELECTING = 1
+
+
 class Gene:
     """Class to hold a representation of a gene, with structural data and variant annotations.
     Structural data include coding sequence (start, end), exon list (starts, ends), exon count and variants found on the gene.
@@ -114,7 +118,7 @@ class Gene:
         self.cds_end = None
         self.exon_starts = None
         self.exon_ends = None
-        self.variants = None
+        self.variants = []
         self.tx_start = None
         self.tx_end = None
 
@@ -210,6 +214,25 @@ class GeneView(QAbstractScrollArea):
 
         self.resize(640, 200)
         QScroller.grabGesture(self.viewport(), QScroller.LeftMouseButtonGesture)
+
+        self.mouse_mode = MOUSE_EXON_SELECTING
+
+    @property
+    def mouse_mode(self) -> int:
+        return self._mouse_mode
+
+    @mouse_mode.setter
+    def mouse_mode(self, value: int):
+        if value not in (MOUSE_GRABBING, MOUSE_EXON_SELECTING):
+            raise ValueError(
+                "Mouse mode should be one of: MOUSE_GRABBING,MOUSE_EXON_SELECTING"
+            )
+        else:
+            self._mouse_mode = value
+            if value == MOUSE_GRABBING:
+                QScroller.grabGesture(self.viewport(), QScroller.LeftMouseButtonGesture)
+            if value == MOUSE_EXON_SELECTING:
+                QScroller.ungrabGesture(self.viewport())
 
     def paintEvent(self, event: QPaintEvent):
 
@@ -386,7 +409,7 @@ class GeneView(QAbstractScrollArea):
 
         tx_size = self.gene.tx_end - self.gene.tx_start
         scale = tx_size / self.area.width()
-        return pixel * scale + self.tx_start
+        return pixel * scale + self.gene.tx_start
 
     def _dna_to_pixel(self, dna: int):
 
@@ -442,9 +465,13 @@ class GeneView(QAbstractScrollArea):
             if self.scale_factor > 1:
                 self.set_scale(self.scale_factor - 0.5)
 
-    def mousePressEvent(self, event):
+    def mousePressEvent(self, event: QMouseEvent):
 
         super().mousePressEvent(event)
+        if self.mouse_mode == MOUSE_EXON_SELECTING:
+            dna_pos = self._pixel_to_dna(self._scroll_to_pixel(event.localPos().x()))
+            self.gene.variants.append([dna_pos, 1])
+            self.viewport().update()
         # print("mark")
         # self.marks.append(self.horizontalScrollBar().value())
         # self.viewport().update()
