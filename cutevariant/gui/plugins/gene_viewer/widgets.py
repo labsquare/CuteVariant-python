@@ -468,10 +468,19 @@ class GeneView(QAbstractScrollArea):
     def mousePressEvent(self, event: QMouseEvent):
 
         super().mousePressEvent(event)
+
+        # Scroll to clicked exon
         if self.mouse_mode == MOUSE_EXON_SELECTING:
-            dna_pos = self._pixel_to_dna(self._scroll_to_pixel(event.localPos().x()))
-            self.gene.variants.append([dna_pos, 1])
-            self.viewport().update()
+            dna_pos = self._pixel_to_dna(
+                self._scroll_to_pixel(event.localPos().x() - self.draw_area().left())
+            )
+            if self.gene.exon_starts and self.gene.exon_ends:
+                for start, end in zip(self.gene.exon_starts, self.gene.exon_ends):
+                    if dna_pos > start and dna_pos < end:
+                        print("Clicked on an exon !")
+                        return
+                print("Clicked on an intron !")
+
         # print("mark")
         # self.marks.append(self.horizontalScrollBar().value())
         # self.viewport().update()
