@@ -192,7 +192,7 @@ class GeneView(QAbstractScrollArea):
         # self.variants = [(117227892, "red"), (117243866, "red")]
 
         # style
-        self.cds_height = 40
+        self.cds_height = 60
         self.exon_height = 30
         self.intron_height = 20
 
@@ -235,29 +235,14 @@ class GeneView(QAbstractScrollArea):
         # Draw intron Background
         self._draw_introns(painter)
 
+        # Draw CDS
+        self._draw_cds(painter)
+
         # Draw exons
         self._draw_exons(painter)
 
-        # Draw CDS
-
         # Draw variants
-
         self._draw_variants(painter)
-
-        # charles_cds_start = (
-        #     self._pixel_to_scroll(self._dna_to_pixel(self.gene.cds_start)) + self.area.left()
-        # )
-        # charles_cds_end = (
-        #     self._pixel_to_scroll(self._dna_to_pixel(self.gene.cds_end)) + self.area.left()
-        # )
-
-        # rect = QRect()
-        # rect.setLeft(charles_cds_start)
-        # rect.setRight(charles_cds_end)
-        # rect.setHeight(20)
-        # painter.drawRect(rect)
-
-        # Draw CDS
 
         painter.end()
 
@@ -322,7 +307,6 @@ class GeneView(QAbstractScrollArea):
                     self.area.center().y() - self.exon_height / 2,
                 )
 
-                painter.drawText(exon_rect, Qt.AlignCenter, str(i))
                 linearGrad = QLinearGradient(
                     QPoint(0, exon_rect.top()), QPoint(0, exon_rect.bottom())
                 )
@@ -331,6 +315,72 @@ class GeneView(QAbstractScrollArea):
                 brush = QBrush(linearGrad)
                 painter.setBrush(brush)
                 painter.drawRect(exon_rect)
+                painter.drawText(exon_rect, Qt.AlignCenter, str(i))
+
+    def _draw_cds(self, painter: QPainter):
+        painter.save()
+        if self.gene.cds_start and self.gene.cds_end:
+            painter.setClipRect(self.area)
+
+            # We draw, on every exon, the CDS rectangle (if existing)
+            for i in range(self.gene.exon_count):
+
+                def overlap(interval1, interval2):
+                    """
+                    Given [0, 4] and [1, 10] returns (True,1, 4)
+                    Given [0,10] and [15,20] return (False,0,0)
+                    Thanks to https://stackoverflow.com/questions/2953967/built-in-function-for-computing-overlap-in-python
+                    for saving me time !
+                    """
+                    _overlaps = True
+                    if interval2[0] <= interval1[0] and interval1[0] <= interval2[1]:
+                        start = interval1[0]
+                    elif interval1[0] <= interval2[0] and interval2[0] <= interval1[1]:
+                        start = interval2[0]
+                    else:
+                        _overlaps = False
+                        start, end = 0, 0
+
+                    if interval2[0] <= interval1[1] <= interval2[1]:
+                        end = interval1[1]
+                    elif interval1[0] <= interval2[1] <= interval1[1]:
+                        end = interval2[1]
+                    else:
+                        _overlaps = False
+                        start, end = 0, 0
+
+                    return (_overlaps, start, end)
+
+                overlaps, start, end = overlap(
+                    [self.gene.cds_start, self.gene.cds_end],
+                    [self.gene.exon_starts[i], self.gene.exon_ends[i]],
+                )
+
+                if not overlaps:
+                    continue
+
+                start = self._dna_to_pixel(start)
+                end = self._dna_to_pixel(end)
+
+                start = self._pixel_to_scroll(start)
+                end = self._pixel_to_scroll(end)
+
+                cds_rect = QRect(0, 0, end - start, self.cds_height)
+                cds_rect.moveTo(
+                    start + self.area.left(),
+                    self.area.center().y() - self.cds_height / 2,
+                )
+
+                linearGrad = QLinearGradient(
+                    QPoint(0, cds_rect.top()), QPoint(0, cds_rect.bottom())
+                )
+                linearGrad.setColorAt(0, QColor("#194980"))
+                linearGrad.setColorAt(1, QColor("#194980").darker(400))
+                brush = QBrush(linearGrad)
+                painter.setBrush(brush)
+                painter.drawRect(cds_rect)
+
+        painter.restore()
 
     def _pixel_to_dna(self, pixel: int):
 
