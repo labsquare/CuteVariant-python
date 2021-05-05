@@ -265,7 +265,7 @@ class GeneView(QAbstractScrollArea):
         self._draw_exons(painter)
 
         # Draw CDS
-        self._draw_cds(painter)
+        # self._draw_cds(painter)
 
         painter.end()
 
@@ -448,6 +448,7 @@ class GeneView(QAbstractScrollArea):
         self.horizontalScrollBar().setValue(new)
 
     def set_translation(self, x):
+        print(x)
         self.translation = x
         self.viewport().update()
 
@@ -472,7 +473,13 @@ class GeneView(QAbstractScrollArea):
             start (int): DNA start position in the current transcript
             end (int): DNA end position in the current transcript
         """
-        pass
+        dna_pixel_size = end - start
+
+        tx_pixel_size = self.gene.tx_end - self.gene.tx_start
+        scale = tx_pixel_size / dna_pixel_size
+        self.set_scale(scale)
+        self.horizontalScrollBar().setValue(self._dna_to_pixel(start) * scale)
+        self.viewport().update()
 
     def mousePressEvent(self, event: QMouseEvent):
 
@@ -491,7 +498,7 @@ class GeneView(QAbstractScrollArea):
                         # )
                         # exon_size_px = abs(self._dna_to_pixel(end - start))
                         # self.set_scale()
-                        print("Clicked on an exon !")
+                        self.zoom_to_dna_interval(start, end)
                         return
                 print("Clicked on an intron !")
 
@@ -649,16 +656,40 @@ if __name__ == "__main__":
 
     import os
 
-    try:
-        os.remove("/home/charles/refGene.db")
-    except:
-        pass
+    # try:
+    #     os.remove("/home/charles/refGene.db")
+    # except:
+    #     pass
 
-    refGene_to_sqlite("/home/charles/refGene.txt.gz", "/home/charles/refGene.db")
+    # refGene_to_sqlite("/home/charles/refGene.txt.gz", "/home/charles/refGene.db")
 
-    # app = QApplication(sys.argv)
+    app = QApplication(sys.argv)
 
-    # view = GeneView()
-    # view.show()
+    view = GeneView()
+    view.show()
 
-    # app.exec_()
+    annotations_conn = sqlite3.connect(
+        "/home/charles/refGene.db", detect_types=sqlite3.PARSE_DECLTYPES
+    )
+    annotations_conn.row_factory = sqlite3.Row
+    gene_data = dict(
+        annotations_conn.execute(
+            "SELECT transcript,tx_start,tx_end,cds_start,cds_end,exon_starts,exon_ends,gene FROM refGene WHERE gene = 'GJB2'"
+        ).fetchone()
+    )
+    # self.view.gene.tx_start = gene_data["tx_start"]
+    # self.view.gene.tx_end = gene_data["tx_end"]
+    # self.view.gene.cds_start = gene_data["cds_start"]
+    # self.view.gene.cds_end = gene_data["cds_end"]
+    # self.view.gene.exon_starts = gene_data["exon_starts"]
+    # self.view.gene.exon_ends = gene_data["exon_ends"]
+
+    # Set all attributes of our gene from the query
+    [
+        setattr(view.gene, attr_name, gene_data[attr_name])
+        for attr_name in gene_data
+        if hasattr(view.gene, attr_name)
+    ]
+    view.viewport().update()
+
+    app.exec_()
