@@ -508,6 +508,40 @@ class GeneViewerWidget(plugin.PluginWidget):
         self.combo = QComboBox()
         self.combo.setEditable(True)
         self.toolbar = QToolBar()
+        # self.toolbar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+
+        mouse_mode_selection_group = QActionGroup(self)
+
+        # ------------------------------------ Begin setting up set mouse grab action
+        self.mouse_grab_act = QAction(
+            FIcon(0xF01BE),
+            self.tr("Mouse grab"),
+        )
+        self.mouse_grab_act.triggered.connect(
+            lambda: self.set_view_mouse_mode(MOUSE_GRABBING)
+        )
+        self.mouse_grab_act.setCheckable(True)
+        mouse_mode_selection_group.addAction(self.mouse_grab_act)
+        self.toolbar.addAction(self.mouse_grab_act)
+        # ------------------------------------- End setting up set mouse grab action
+
+        # ------------------------------------ Begin setting up set mouse exon select action
+        self.mouse_select_act = QAction(
+            FIcon(0xF01BD),
+            self.tr("Exon select"),
+        )
+        self.mouse_select_act.triggered.connect(
+            lambda: self.set_view_mouse_mode(MOUSE_EXON_SELECTING)
+        )
+        self.mouse_select_act.setCheckable(True)
+        self.mouse_select_act.setChecked(True)
+        mouse_mode_selection_group.addAction(self.mouse_select_act)
+        self.toolbar.addAction(self.mouse_select_act)
+        # ------------------------------------- End setting up set mouse exon select action
+
+        self.toolbar.addAction(
+            FIcon(0xF1276), self.tr("Reset zoom"), lambda: self.view.set_scale(1)
+        )
         self.toolbar.addWidget(self.combo)
 
         self.vlayout = QVBoxLayout(self)
@@ -521,6 +555,9 @@ class GeneViewerWidget(plugin.PluginWidget):
         self.load_combo()
 
         self.combo.currentIndexChanged.connect(self.on_combo_changed)
+
+    def set_view_mouse_mode(self, mouse_mode=MOUSE_GRABBING):
+        self.view.mouse_mode = mouse_mode
 
     def on_open_project(self, conn):
         self.conn = conn
