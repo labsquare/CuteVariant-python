@@ -27,6 +27,19 @@ from cutevariant.gui.widgets import VqlSyntaxHighlighter
 LOGGER = logger()
 
 
+def sql_to_vector_converter(data):
+    return [int(i) for i in str(data, encoding="utf8").split(",") if i.isnumeric()]
+
+
+def list_to_sql_adapter(data: list):
+    return ",".join([d for d in data if d])
+
+
+# This registration of types in sqlite3 is so important it must be set in this module before anything else
+sqlite3.register_converter("VECTOR", sql_to_vector_converter)
+sqlite3.register_adapter(list, list_to_sql_adapter)
+
+
 def refGene_to_sqlite(ref_filename: str, db_filename: str):
 
     # Create databases
@@ -37,12 +50,12 @@ def refGene_to_sqlite(ref_filename: str, db_filename: str):
         CREATE TABLE refGene(  
         id INTEGER PRIMARY KEY,
         transcript TEXT, 
-        txStart INTEGER, 
-        txEnd INTEGER,
-        cdsStart INTEGER,
-        cdsEnd INTEGER,
-        exonStarts TEXT,
-        exonEnds TEXT,
+        tx_start INTEGER, 
+        tx_end INTEGER,
+        cds_start INTEGER,
+        cds_end INTEGER,
+        exon_starts VECTOR,
+        exon_ends VECTOR,
         gene TEXT
         )
 
@@ -60,8 +73,8 @@ def refGene_to_sqlite(ref_filename: str, db_filename: str):
                 txEnd = line[5]
                 cdsStart = line[6]
                 cdsEnd = line[7]
-                exonStarts = line[9]
-                exonEnds = line[10]
+                exonStarts = line[9].split(",")
+                exonEnds = line[10].split(",")
                 gene = line[12]
 
                 data.append(
@@ -91,13 +104,12 @@ VARIANT_LOLLIPOP_COLOR_MAP = {
 }
 
 
-class Gene(QObject):
+class Gene:
     """Class to hold a representation of a gene, with structural data and variant annotations.
     Structural data include coding sequence (start, end), exon list (starts, ends), exon count and variants found on the gene.
     """
 
-    def __init__(self, parent: QObject = None):
-        super().__init__(parent)
+    def __init__(self):
         self.cds_start = None
         self.cds_end = None
         self.exon_starts = None
@@ -175,7 +187,7 @@ class GeneView(QAbstractScrollArea):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        self.gene = Gene(self)
+        self.gene = Gene()
 
         # self.variants = [(117227892, "red"), (117243866, "red")]
 
@@ -397,7 +409,7 @@ class GeneViewerWidget(plugin.PluginWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        self.filename = "/home/charles/refGene.db"
+        self.annotations_file_name = "/home/charles/refGene.db"
 
         self.setWindowTitle(self.tr("Gene Viewer"))
 
@@ -411,7 +423,9 @@ class GeneViewerWidget(plugin.PluginWidget):
         self.vlayout.addWidget(self.toolbar)
         self.vlayout.addWidget(self.view)
 
-        self.model = QSqlQueryModel()
+        self.annotations_conn = None
+
+        self.model = QStringListModel()
         self.combo.setModel(self.model)
         self.load_combo()
 
@@ -446,43 +460,47 @@ class GeneViewerWidget(plugin.PluginWidget):
         self.view.viewport().update()
 
     def load_combo(self):
-        db = QSqlDatabase("QSQLITE")
-        db.setDatabaseName(self.filename)
-        if db.open():
-            self.model.setQuery("SELECT gene FROM refGene", db)
+        # TODO: move this connection, shouldn't be here...
+        self.annotations_conn = sqlite3.connect(
+            self.annotations_file_name, detect_types=sqlite3.PARSE_DECLTYPES
+        )
+        print(self.annotations_conn)
+
+        self.annotations_conn.row_factory = sqlite3.Row
+        gene_names = [
+            s["gene"]
+            for s in self.annotations_conn.execute(
+                "SELECT gene FROM refGene WHERE gene IN ('CFTR','GJB2')"
+            )
+        ]
+        self.model.setStringList(gene_names)
 
     def on_combo_changed(self):
 
-        gene = self.combo.currentText()
+        if self.annotations_conn:
 
-        conn = sqlite3.connect(self.filename)
+            gene = self.combo.currentText()
 
-        results = next(conn.execute(f"SELECT * FROM refGene WHERE gene = '{gene}'"))
+            gene_data = dict(
+                self.annotations_conn.execute(
+                    f"SELECT transcript,tx_start,tx_end,cds_start,cds_end,exon_starts,exon_ends,gene FROM refGene WHERE gene = '{gene}'"
+                ).fetchone()
+            )
+            # self.view.gene.tx_start = gene_data["tx_start"]
+            # self.view.gene.tx_end = gene_data["tx_end"]
+            # self.view.gene.cds_start = gene_data["cds_start"]
+            # self.view.gene.cds_end = gene_data["cds_end"]
+            # self.view.gene.exon_starts = gene_data["exon_starts"]
+            # self.view.gene.exon_ends = gene_data["exon_ends"]
 
-        (
-            _,
-            transcript,
-            txStart,
-            txEnd,
-            cdsStart,
-            cdsEnd,
-            exonsStarts,
-            exonEnds,
-            gene,
-        ) = results
+            # Set all attributes of our gene from the query
+            [
+                setattr(self.view.gene, attr_name, gene_data[attr_name])
+                for attr_name in gene_data
+                if hasattr(self.view.gene, attr_name)
+            ]
 
-        self.view.gene.tx_start = txStart
-        self.view.gene.tx_end = txEnd
-
-        self.view.gene.cds_start = cdsStart
-        self.view.gene.cds_end = cdsEnd
-
-        self.view.gene.exon_starts = [int(i) for i in exonsStarts.split(",")[:-1]]
-        self.view.gene.exon_ends = [int(i) for i in exonEnds.split(",")[:-1]]
-
-        print("EXON STARTS :", self.view.gene.exon_starts)
-
-        self.view.viewport().update()
+            self.view.viewport().update()
 
 
 if __name__ == "__main__":
@@ -494,16 +512,16 @@ if __name__ == "__main__":
 
     import os
 
-    # try:
-    #     os.remove("/home/charles/refGene.db")
-    # except:
-    #     pass
+    try:
+        os.remove("/home/charles/refGene.db")
+    except:
+        pass
 
-    # refGene_to_sqlite("/home/charles/refGene.txt.gz", "/home/charles/refGene.db")
+    refGene_to_sqlite("/home/charles/refGene.txt.gz", "/home/charles/refGene.db")
 
-    app = QApplication(sys.argv)
+    # app = QApplication(sys.argv)
 
-    view = GeneView()
-    view.show()
+    # view = GeneView()
+    # view.show()
 
-    app.exec_()
+    # app.exec_()
