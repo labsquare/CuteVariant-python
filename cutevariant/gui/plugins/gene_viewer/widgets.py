@@ -82,91 +82,109 @@ def refGene_to_sqlite(ref_filename: str, db_filename: str):
     conn.commit()
 
 
+# Each variant will have a color index to set a representation color
+# Below is the definition of color mapping for these lollipops
+VARIANT_LOLLIPOP_COLOR_MAP = {
+    0: QColor("#FF0000"),
+    1: QColor("#00FF00"),
+    2: QColor("#0000FF"),
+}
+
+
+class Gene(QObject):
+    """Class to hold a representation of a gene, with structural data and variant annotations.
+    Structural data include coding sequence (start, end), exon list (starts, ends), exon count and variants found on the gene.
+    """
+
+    def __init__(self, parent: QObject = None):
+        super().__init__(parent)
+        self.cds_start = None
+        self.cds_end = None
+        self.exon_starts = None
+        self.exon_ends = None
+        self.variants = None
+        self.tx_start = None
+        self.tx_end = None
+
+    @property
+    def tx_start(self) -> int:
+        return self._tx_start
+
+    @tx_start.setter
+    def tx_start(self, value: int):
+        self._tx_start = value
+
+    @property
+    def tx_end(self) -> int:
+        return self._tx_end
+
+    @tx_end.setter
+    def tx_end(self, value: int):
+        self._tx_end = value
+
+    @property
+    def cds_start(self) -> int:
+        return self._cds_start
+
+    @cds_start.setter
+    def cds_start(self, value: int):
+        self._cds_start = value
+
+    @property
+    def cds_end(self) -> int:
+        return self._cds_end
+
+    @cds_end.setter
+    def cds_end(self, value: int):
+        self._cds_end = value
+
+    @property
+    def exon_starts(self) -> typing.List[int]:
+        return self._exon_starts
+
+    @exon_starts.setter
+    def exon_starts(self, value: typing.List[int]):
+        self._exon_count = len(value) if value else 0
+        self._exon_starts = value
+
+    @property
+    def exon_ends(self) -> typing.List[int]:
+        return self._exon_ends
+
+    @exon_ends.setter
+    def exon_ends(self, value: typing.List[int]):
+        self._exon_count = len(value) if value else 0
+        self._exon_ends = value
+
+    @property
+    def variants(self) -> typing.List[typing.Tuple[int, int]]:
+        return self._variants
+
+    @variants.setter
+    def variants(self, value: typing.List[typing.Tuple[int, int]]):
+        self._variants = value
+
+    @property
+    def exon_count(self) -> int:
+        return self._exon_count
+
+
 class GeneView(QAbstractScrollArea):
-    """docstring for ClassName"""
+    """A class to visualize variants on a gene diagram, showing introns, exons, and coding sequence."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        self.name = "NM_000492"
-        self.chrom = "chr7"
-        self.strand = "+"
-        self.tx_start = 117120078
-        self.tx_end = 117308718
+        self.gene = Gene(self)
 
-        self.cds_start = 117120148
-        self.cds_end = 117307162
-
-        self.exon_starts = [
-            117120078,
-            117144306,
-            117149087,
-            117170952,
-            117174329,
-            117175301,
-            117176601,
-            117180153,
-            117182069,
-            117188694,
-            117199517,
-            117227792,
-            117230406,
-            117231987,
-            117234983,
-            117242879,
-            117243585,
-            117246727,
-            117250572,
-            117251634,
-            117254666,
-            117267575,
-            117282491,
-            117292895,
-            117304741,
-            117305512,
-            117306961,
-        ]
-        self.exon_ends = [
-            117120201,
-            117144417,
-            117149196,
-            117171168,
-            117174419,
-            117175465,
-            117176727,
-            117180400,
-            117182162,
-            117188877,
-            117199709,
-            117227887,
-            117230493,
-            117232711,
-            117235112,
-            117242917,
-            117243836,
-            117246807,
-            117250723,
-            117251862,
-            117254767,
-            117267824,
-            117282647,
-            117292985,
-            117304914,
-            117305618,
-            117308718,
-        ]
-
-        self.variants = [(117227892, "red"), (117243866, "red")]
-
-        self.exon_count = len(self.exon_starts)
+        # self.variants = [(117227892, "red"), (117243866, "red")]
 
         # style
+        self.cds_height = 40
         self.exon_height = 30
         self.intron_height = 20
 
         # self.showMaximized()
-
-        self._area = None
 
         self.scale_factor = 1
         self.translation = 0
@@ -175,8 +193,6 @@ class GeneView(QAbstractScrollArea):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
         self.horizontalScrollBar().setRange(0, 0)
-
-        # QScroller.grabGesture(self, QScroller.LeftMouseButtonGesture);
 
         self.horizontalScrollBar().valueChanged.connect(self.set_translation)
 
@@ -191,44 +207,52 @@ class GeneView(QAbstractScrollArea):
         painter.drawRect(self.rect())
 
         # draw guide
-        area = self.draw_area()
-        painter.drawRect(area.adjusted(-2, -2, 2, 2))
+        self.area = self.draw_area()
+        painter.drawRect(self.area.adjusted(-2, -2, 2, 2))
 
-        self.marks = []
-
-        # Draw variants
-
-        painter.save()
-        for variant in self.variants:
-
-            pos, color = variant
-
-            x = self._pixel_to_scroll(self._dna_to_pixel(pos)) + area.left()
-            pen = QPen()
-            pen.setColor(QColor(color))
-            pen.setCapStyle(Qt.RoundCap)
-            pen.setWidth(10)
-            painter.setPen(pen)
-            mark = QPoint(x, self.viewport().height() / 4)
-            base = QPoint(x, self.viewport().height() / 2)
-
-            painter.drawPoint(mark)
-
-            pen.setWidth(1)
-            painter.setPen(pen)
-            painter.drawLine(mark, base)
-
-        painter.restore()
+        # self.marks = []
 
         # draw rule
         painter.drawLine(
-            area.left(), area.center().y(), area.right(), area.center().y()
+            self.area.left(),
+            self.area.center().y(),
+            self.area.right(),
+            self.area.center().y(),
         )
 
         # Draw intron Background
-        intron_rect = QRect(area)
+        self._draw_introns(painter)
+
+        # Draw exons
+        self._draw_exons(painter)
+
+        # Draw CDS
+
+        # Draw variants
+
+        self._draw_variants(painter)
+
+        # charles_cds_start = (
+        #     self._pixel_to_scroll(self._dna_to_pixel(self.gene.cds_start)) + self.area.left()
+        # )
+        # charles_cds_end = (
+        #     self._pixel_to_scroll(self._dna_to_pixel(self.gene.cds_end)) + self.area.left()
+        # )
+
+        # rect = QRect()
+        # rect.setLeft(charles_cds_start)
+        # rect.setRight(charles_cds_end)
+        # rect.setHeight(20)
+        # painter.drawRect(rect)
+
+        # Draw CDS
+
+        painter.end()
+
+    def _draw_introns(self, painter: QPainter):
+        intron_rect = QRect(self.area)
         intron_rect.setHeight(self.intron_height)
-        intron_rect.moveCenter(QPoint(area.center().x(), area.center().y()))
+        intron_rect.moveCenter(QPoint(self.area.center().x(), self.area.center().y()))
         linearGrad = QLinearGradient(
             QPoint(0, intron_rect.top()), QPoint(0, intron_rect.bottom())
         )
@@ -238,67 +262,76 @@ class GeneView(QAbstractScrollArea):
         painter.setBrush(brush)
         painter.drawRect(intron_rect)
 
-        # draw exons
+    def _draw_variants(self, painter: QPainter):
+        if self.gene.variants:
+            painter.save()
 
-        painter.setClipRect(area)
+            for variant in self.gene.variants:
 
-        charles_cds_start = (
-            self._pixel_to_scroll(self._dna_to_pixel(self.cds_start)) + area.left()
-        )
-        charles_cds_end = (
-            self._pixel_to_scroll(self._dna_to_pixel(self.cds_end)) + area.left()
-        )
+                pos, color = variant
+                color = VARIANT_LOLLIPOP_COLOR_MAP.get(color, QColor("#FF00FF"))
 
-        rect = QRect()
-        rect.setLeft(charles_cds_start)
-        rect.setRight(charles_cds_end)
-        rect.setHeight(20)
-        painter.drawRect(rect)
+                x = self._pixel_to_scroll(self._dna_to_pixel(pos)) + self.area.left()
+                pen = QPen()
+                pen.setColor(QColor(color))
+                pen.setCapStyle(Qt.RoundCap)
+                pen.setWidth(10)
+                painter.setPen(pen)
+                mark = QPoint(x, self.viewport().height() / 4)
+                base = QPoint(x, self.viewport().height() / 2)
 
-        for i in range(self.exon_count):
+                painter.drawPoint(mark)
 
-            start = self._dna_to_pixel(self.exon_starts[i])
-            end = self._dna_to_pixel(self.exon_ends[i])
+                pen.setWidth(1)
+                painter.setPen(pen)
+                painter.drawLine(mark, base)
 
-            start = self._pixel_to_scroll(start)
-            end = self._pixel_to_scroll(end)
+            painter.restore()
 
-            for m in self.marks:
-                print("mark", m)
-                painter.drawLine(m, 0, m, area.bottom())
+    def _draw_exons(self, painter: QPainter):
+        if self.gene.exon_count:
+            painter.setClipRect(self.area)
+            for i in range(self.gene.exon_count):
 
-            # draw exons
-            exon_rect = QRect(0, 0, end - start, self.exon_height)
-            exon_rect.moveTo(
-                start + area.left(), area.center().y() - self.exon_height / 2
-            )
+                start = self._dna_to_pixel(self.gene.exon_starts[i])
+                end = self._dna_to_pixel(self.gene.exon_ends[i])
 
-            painter.drawText(exon_rect, Qt.AlignCenter, str(i))
-            linearGrad = QLinearGradient(
-                QPoint(0, exon_rect.top()), QPoint(0, exon_rect.bottom())
-            )
-            linearGrad.setColorAt(0, QColor("#789FCC"))
-            linearGrad.setColorAt(1, QColor("#789FCC").darker())
-            brush = QBrush(linearGrad)
-            painter.setBrush(brush)
-            painter.drawRect(exon_rect)
+                start = self._pixel_to_scroll(start)
+                end = self._pixel_to_scroll(end)
 
-            # Draw CDS
+                # for m in self.marks:
+                #     print("mark", m)
+                #     painter.drawLine(m, 0, m, self.area.bottom())
 
-        painter.end()
+                # draw exons
+                exon_rect = QRect(0, 0, end - start, self.exon_height)
+                exon_rect.moveTo(
+                    start + self.area.left(),
+                    self.area.center().y() - self.exon_height / 2,
+                )
+
+                painter.drawText(exon_rect, Qt.AlignCenter, str(i))
+                linearGrad = QLinearGradient(
+                    QPoint(0, exon_rect.top()), QPoint(0, exon_rect.bottom())
+                )
+                linearGrad.setColorAt(0, QColor("#789FCC"))
+                linearGrad.setColorAt(1, QColor("#789FCC").darker())
+                brush = QBrush(linearGrad)
+                painter.setBrush(brush)
+                painter.drawRect(exon_rect)
 
     def _pixel_to_dna(self, pixel: int):
 
-        tx_size = self.tx_end - self.tx_start
-        scale = tx_size / self.draw_area().width()
+        tx_size = self.gene.tx_end - self.gene.tx_start
+        scale = tx_size / self.area.width()
         return pixel * scale + self.tx_start
 
     def _dna_to_pixel(self, dna: int):
 
         # normalize dna
-        dna = dna - self.tx_start
-        tx_size = self.tx_end - self.tx_start
-        scale = self.draw_area().width() / tx_size
+        dna = dna - self.gene.tx_start
+        tx_size = self.gene.tx_end - self.gene.tx_start
+        scale = self.area.width() / tx_size
         return dna * scale
 
     def _pixel_to_scroll(self, pixel):
@@ -364,7 +397,7 @@ class GeneViewerWidget(plugin.PluginWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        self.filename = "/home/sacha/refGene.db"
+        self.filename = "/home/charles/refGene.db"
 
         self.setWindowTitle(self.tr("Gene Viewer"))
 
@@ -392,7 +425,12 @@ class GeneViewerWidget(plugin.PluginWidget):
         gene = self.combo.currentText()
 
         filters = copy.deepcopy(self.mainwindow.state.filters)
+
         fields = ["pos"]
+
+        # TODO: What if the filters have an '$or' operator as a root ?
+        if "$and" not in filters:
+            filters = {"$and": []}
 
         filters["$and"].append({"ann.gene": gene})
 
@@ -403,7 +441,7 @@ class GeneViewerWidget(plugin.PluginWidget):
             filters,
         )
 
-        self.view.variants = [(variant["pos"], "red") for variant in variants]
+        self.view.gene.variants = [(variant["pos"], "red") for variant in variants]
 
         self.view.viewport().update()
 
@@ -433,18 +471,16 @@ class GeneViewerWidget(plugin.PluginWidget):
             gene,
         ) = results
 
-        self.view.tx_start = txStart
-        self.view.tx_end = txEnd
+        self.view.gene.tx_start = txStart
+        self.view.gene.tx_end = txEnd
 
-        self.view.cds_start = cdsStart
-        self.view.cds_end = cdsEnd
+        self.view.gene.cds_start = cdsStart
+        self.view.gene.cds_end = cdsEnd
 
-        self.view.exon_starts = [int(i) for i in exonsStarts.split(",")[:-1]]
-        self.view.exon_ends = [int(i) for i in exonEnds.split(",")[:-1]]
+        self.view.gene.exon_starts = [int(i) for i in exonsStarts.split(",")[:-1]]
+        self.view.gene.exon_ends = [int(i) for i in exonEnds.split(",")[:-1]]
 
-        print(self.view.exon_starts)
-
-        self.view.exon_count = len(self.view.exon_starts)
+        print("EXON STARTS :", self.view.gene.exon_starts)
 
         self.view.viewport().update()
 
@@ -453,17 +489,17 @@ if __name__ == "__main__":
 
     pass
 
-    # import sys
-    # import sqlite3
+    import sys
+    import sqlite3
 
-    # import os
+    import os
 
     # try:
-    #     os.remove("/home/sacha/refGene.db")
+    #     os.remove("/home/charles/refGene.db")
     # except:
     #     pass
 
-    # refGene_to_sqlite("/home/sacha/refGene.txt.gz", "/home/sacha/refGene.db")
+    # refGene_to_sqlite("/home/charles/refGene.txt.gz", "/home/charles/refGene.db")
 
     app = QApplication(sys.argv)
 
