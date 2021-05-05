@@ -584,12 +584,20 @@ class GeneViewerWidget(plugin.PluginWidget):
 
         self.combo.currentIndexChanged.connect(self.on_combo_changed)
 
+        self.current_variant = None
+
     def on_open_project(self, conn):
         self.conn = conn
 
     def on_refresh(self):
 
-        gene = self.combo.currentText()
+        # gene = self.combo.currentText()
+
+        self.current_variant = self.mainwindow.state.current_variant
+        gene = self.current_variant["ann.gene"]
+        self.combo.blockSignals(True)
+        self.combo.setCurrentText(gene)
+        self.combo.blockSignals(False)
 
         filters = copy.deepcopy(self.mainwindow.state.filters)
 
@@ -621,10 +629,7 @@ class GeneViewerWidget(plugin.PluginWidget):
 
         self.annotations_conn.row_factory = sqlite3.Row
         gene_names = [
-            s["gene"]
-            for s in self.annotations_conn.execute(
-                "SELECT gene FROM refGene WHERE gene IN ('CFTR','GJB2')"
-            )
+            s["gene"] for s in self.annotations_conn.execute("SELECT gene FROM refGene")
         ]
         self.model.setStringList(gene_names)
 

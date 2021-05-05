@@ -1537,6 +1537,7 @@ class VariantViewWidget(plugin.PluginWidget):
             self.mainwindow.state.current_variant = variant
             # Request a refresh of the variant_info plugin
             self.mainwindow.refresh_plugin("variant_info")
+            self.mainwindow.refresh_plugin("gene_viewer")
 
     def _refresh_vql_editor(self):
         """Force refresh of vql_editor if loaded"""
