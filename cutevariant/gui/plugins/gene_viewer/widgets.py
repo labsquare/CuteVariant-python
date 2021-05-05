@@ -477,6 +477,11 @@ class GeneView(QAbstractScrollArea):
             if self.gene.exon_starts and self.gene.exon_ends:
                 for start, end in zip(self.gene.exon_starts, self.gene.exon_ends):
                     if dna_pos > start and dna_pos < end:
+                        # self.set_translation(
+                        #     self._pixel_to_scroll(self._dna_to_pixel(dna_pos)) / 2
+                        # )
+                        # exon_size_px = abs(self._dna_to_pixel(end - start))
+                        # self.set_scale()
                         print("Clicked on an exon !")
                         return
                 print("Clicked on an intron !")
