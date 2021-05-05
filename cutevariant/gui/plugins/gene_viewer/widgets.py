@@ -104,10 +104,6 @@ VARIANT_LOLLIPOP_COLOR_MAP = {
 }
 
 
-MOUSE_GRABBING = 0
-MOUSE_EXON_SELECTING = 1
-
-
 class Gene:
     """Class to hold a representation of a gene, with structural data and variant annotations.
     Structural data include coding sequence (start, end), exon list (starts, ends), exon count and variants found on the gene.
@@ -205,7 +201,7 @@ class GeneView(QAbstractScrollArea):
         self.scale_factor = 1
         self.translation = 0
 
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
         self.horizontalScrollBar().setRange(0, 0)
@@ -215,24 +211,11 @@ class GeneView(QAbstractScrollArea):
         self.resize(640, 200)
         QScroller.grabGesture(self.viewport(), QScroller.LeftMouseButtonGesture)
 
-        self.mouse_mode = MOUSE_EXON_SELECTING
+        self.region = None
 
-    @property
-    def mouse_mode(self) -> int:
-        return self._mouse_mode
-
-    @mouse_mode.setter
-    def mouse_mode(self, value: int):
-        if value not in (MOUSE_GRABBING, MOUSE_EXON_SELECTING):
-            raise ValueError(
-                "Mouse mode should be one of: MOUSE_GRABBING,MOUSE_EXON_SELECTING"
-            )
-        else:
-            self._mouse_mode = value
-            if value == MOUSE_GRABBING:
-                QScroller.grabGesture(self.viewport(), QScroller.LeftMouseButtonGesture)
-            if value == MOUSE_EXON_SELECTING:
-                QScroller.ungrabGesture(self.viewport())
+        self.region_brush = QBrush(QColor("#5094CB"))
+        self.region_brush.setStyle(Qt.Dense4Pattern)
+        self.region_pen = QPen(QColor("#1E3252"))
 
     def paintEvent(self, event: QPaintEvent):
 
@@ -266,6 +249,8 @@ class GeneView(QAbstractScrollArea):
 
         # Draw CDS
         # self._draw_cds(painter)
+
+        self._draw_region(painter)
 
         painter.end()
 
@@ -405,6 +390,14 @@ class GeneView(QAbstractScrollArea):
 
         painter.restore()
 
+    def _draw_region(self, painter: QPainter):
+        if self.region:
+            painter.save()
+            painter.setBrush(self.region_brush)
+            painter.setPen(self.region_pen)
+            painter.drawRect(self.region)
+            painter.restore()
+
     def _pixel_to_dna(self, pixel: int):
 
         tx_size = self.gene.tx_end - self.gene.tx_start
@@ -448,12 +441,8 @@ class GeneView(QAbstractScrollArea):
         self.horizontalScrollBar().setValue(new)
 
     def set_translation(self, x):
-        print(x)
         self.translation = x
         self.viewport().update()
-
-    def update_scroll(self):
-        pass
 
     def draw_area(self):
         return self.viewport().rect().adjusted(10, 10, -10, -10)
@@ -482,34 +471,60 @@ class GeneView(QAbstractScrollArea):
         self.viewport().update()
 
     def mousePressEvent(self, event: QMouseEvent):
+        if event.modifiers() == Qt.ControlModifier:
+            self.region = QRect()
+            self.region.setHeight(self.viewport().height())
+            self.region.setLeft(event.pos().x())
+            event.accept()
 
-        super().mousePressEvent(event)
+            return
 
-        # Scroll to clicked exon
-        if self.mouse_mode == MOUSE_EXON_SELECTING:
+        else:
+            super().mousePressEvent(event)
+
+            # Scroll to clicked exon
             dna_pos = self._pixel_to_dna(
                 self._scroll_to_pixel(event.localPos().x() - self.draw_area().left())
             )
             if self.gene.exon_starts and self.gene.exon_ends:
                 for start, end in zip(self.gene.exon_starts, self.gene.exon_ends):
                     if dna_pos > start and dna_pos < end:
-                        # self.set_translation(
-                        #     self._pixel_to_scroll(self._dna_to_pixel(dna_pos)) / 2
-                        # )
-                        # exon_size_px = abs(self._dna_to_pixel(end - start))
-                        # self.set_scale()
                         self.zoom_to_dna_interval(start, end)
                         return
-                print("Clicked on an intron !")
 
         # print("mark")
         # self.marks.append(self.horizontalScrollBar().value())
         # self.viewport().update()
 
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if self.region:
+            self.region.setRight(event.pos().x())
+            self.viewport().update()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if self.region:
+            dna_start = self._pixel_to_dna(
+                self._scroll_to_pixel(
+                    self.region.normalized().left() - self.draw_area().left()
+                )
+            )
+            dna_end = self._pixel_to_dna(
+                self._scroll_to_pixel(
+                    self.region.normalized().right() - self.draw_area().left()
+                )
+            )
+            self.zoom_to_dna_interval(dna_start, dna_end)
+            self.region = None
+            self.viewport().update()
+        super().mouseReleaseEvent(event)
+
 
 class GeneViewerWidget(plugin.PluginWidget):
     """Exposed class to manage VQL/SQL queries from the mainwindow"""
 
+    LOCATION = plugin.FOOTER_LOCATION
     ENABLE = True
     REFRESH_ONLY_VISIBLE = False
 
@@ -526,34 +541,31 @@ class GeneViewerWidget(plugin.PluginWidget):
         self.toolbar = QToolBar()
         # self.toolbar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
 
-        mouse_mode_selection_group = QActionGroup(self)
+        # mouse_mode_selection_group = QActionGroup(self)
 
-        # ------------------------------------ Begin setting up set mouse grab action
-        self.mouse_grab_act = QAction(
-            FIcon(0xF01BE),
-            self.tr("Mouse grab"),
-        )
-        self.mouse_grab_act.triggered.connect(
-            lambda: self.set_view_mouse_mode(MOUSE_GRABBING)
-        )
-        self.mouse_grab_act.setCheckable(True)
-        mouse_mode_selection_group.addAction(self.mouse_grab_act)
-        self.toolbar.addAction(self.mouse_grab_act)
-        # ------------------------------------- End setting up set mouse grab action
+        # # ------------------------------------ Begin setting up set mouse grab action
+        # self.mouse_grab_act = QAction(
+        #     FIcon(0xF01BE),
+        #     self.tr("Mouse grab"),
+        # )
+        # self.mouse_grab_act.setCheckable(True)
+        # mouse_mode_selection_group.addAction(self.mouse_grab_act)
+        # self.toolbar.addAction(self.mouse_grab_act)
+        # # ------------------------------------- End setting up set mouse grab action
 
-        # ------------------------------------ Begin setting up set mouse exon select action
-        self.mouse_select_act = QAction(
-            FIcon(0xF01BD),
-            self.tr("Exon select"),
-        )
-        self.mouse_select_act.triggered.connect(
-            lambda: self.set_view_mouse_mode(MOUSE_EXON_SELECTING)
-        )
-        self.mouse_select_act.setCheckable(True)
-        self.mouse_select_act.setChecked(True)
-        mouse_mode_selection_group.addAction(self.mouse_select_act)
-        self.toolbar.addAction(self.mouse_select_act)
-        # ------------------------------------- End setting up set mouse exon select action
+        # # ------------------------------------ Begin setting up set mouse exon select action
+        # self.mouse_select_act = QAction(
+        #     FIcon(0xF01BD),
+        #     self.tr("Exon select"),
+        # )
+        # self.mouse_select_act.triggered.connect(
+        #     lambda: self.set_view_mouse_mode(MOUSE_EXON_SELECTING)
+        # )
+        # self.mouse_select_act.setCheckable(True)
+        # self.mouse_select_act.setChecked(True)
+        # mouse_mode_selection_group.addAction(self.mouse_select_act)
+        # self.toolbar.addAction(self.mouse_select_act)
+        # # ------------------------------------- End setting up set mouse exon select action
 
         self.toolbar.addAction(
             FIcon(0xF1276), self.tr("Reset zoom"), lambda: self.view.set_scale(1)
@@ -571,9 +583,6 @@ class GeneViewerWidget(plugin.PluginWidget):
         self.load_combo()
 
         self.combo.currentIndexChanged.connect(self.on_combo_changed)
-
-    def set_view_mouse_mode(self, mouse_mode=MOUSE_GRABBING):
-        self.view.mouse_mode = mouse_mode
 
     def on_open_project(self, conn):
         self.conn = conn
