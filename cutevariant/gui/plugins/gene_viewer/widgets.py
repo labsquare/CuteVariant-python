@@ -228,6 +228,8 @@ class GeneView(QAbstractScrollArea):
         self.mouse_mode = MOUSE_RECT_SELECT
         self.cursor_selects = False
 
+        self.selected_exon = -1
+
     @property
     def mouse_mode(self) -> int:
         return self._mouse_mode
@@ -264,6 +266,7 @@ class GeneView(QAbstractScrollArea):
         # draw guide
         self.area = self.draw_area()
         painter.drawRect(self.area.adjusted(-2, -2, 2, 2))
+        painter.setClipRect(self.area)
 
         if not (self.gene.tx_start and self.gene.tx_end):
             painter.drawText(
@@ -299,9 +302,12 @@ class GeneView(QAbstractScrollArea):
         # Draw rect selection region
         self._draw_region(painter)
 
+        # Draw lollipops to highlight exon selection
+        self._draw_exon_handles(painter)
+
         # Draw cursor line
         line_x = self.mapFromGlobal(QCursor.pos()).x()
-        painter.drawLine(line_x, 0, line_x, self.draw_area().height())
+        painter.drawLine(line_x, 0, line_x, self.rect().height())
 
         painter.end()
 
@@ -346,6 +352,7 @@ class GeneView(QAbstractScrollArea):
 
     def _draw_exons(self, painter: QPainter):
         if self.gene.exon_count:
+            painter.save()
             painter.setClipRect(self.area)
             for i in range(self.gene.exon_count):
 
@@ -374,10 +381,22 @@ class GeneView(QAbstractScrollArea):
                 brush = QBrush(linearGrad)
                 painter.setBrush(brush)
                 painter.drawRect(exon_rect)
+            painter.restore()
 
     def _draw_exon_handles(self, painter: QPainter):
         if self.gene.exon_count:
+            painter.save()
             painter.setClipRect(self.area)
+            painter.setRenderHint(QPainter.Antialiasing)
+
+            no_pen = QPen(Qt.NoPen)
+            white_pen = QPen(QColor("white"))
+
+            # Schedule rects for drawing, so we know wich one was selected before drawing it on top
+            rects_to_draw = []
+            mouse_hovered_handle = False
+            self.selected_exon = -1
+
             for i in range(self.gene.exon_count):
 
                 start = self._dna_to_pixel(self.gene.exon_starts[i])
@@ -386,28 +405,79 @@ class GeneView(QAbstractScrollArea):
                 start = self._pixel_to_scroll(start)
                 end = self._pixel_to_scroll(end)
 
-                base = (end - start) / 2
+                base = (end + start) / 2
 
-                # for m in self.marks:
-                #     print("mark", m)
-                #     painter.drawLine(m, 0, m, self.area.bottom())
+                head_width = 34
+                head_height = self.exon_height
 
-                # draw exons
-                exon_rect = QRect(0, 0, end - start, self.exon_height)
-                exon_rect.moveTo(
-                    start + self.area.left(),
-                    self.area.center().y() - self.exon_height / 2,
+                head_rect = QRect(0, 0, head_width, head_height)
+
+                head_rect.moveTo(
+                    base - (head_width / 2) + self.area.left(),
+                    self.area.center().y() + self.cds_height + 15,
                 )
 
+                # If the head rect is outside the boundaries, do nothing
+                if self.area.intersected(head_rect) != head_rect:
+                    continue
+
+                # Now that the head rect is at its definitive place, let's check if the cursor hovers it (Thanks @dridk!)
+                if head_rect.contains(
+                    self.mapFromGlobal(QCursor.pos()).x(), head_rect.center().y()
+                ):
+                    self.selected_exon = i
+
+                rects_to_draw.append((i, head_rect))
+
+            selected_handle = None
+            for exon_index, handle in rects_to_draw:
                 linearGrad = QLinearGradient(
-                    QPoint(0, exon_rect.top()), QPoint(0, exon_rect.bottom())
+                    QPoint(0, handle.top()), QPoint(0, handle.bottom())
+                )
+                if exon_index == self.selected_exon:
+                    selected_handle = handle
+                    continue
+                else:
+                    linearGrad.setColorAt(0, QColor("#789FCC"))
+                    linearGrad.setColorAt(1, QColor("#789FCC"))
+                # brush = QBrush(linearGrad)
+                # painter.setBrush(brush)
+                # painter.setPen(no_pen)
+                # painter.drawEllipse(handle)
+                # painter.setPen(white_pen)
+                # painter.drawText(handle, Qt.AlignCenter, str(exon_index))
+
+            # Always draw selected handle last, no matter what
+            if selected_handle:
+                selected_handle.setWidth(selected_handle.width() * 1.2)
+                selected_handle.setHeight(selected_handle.height() * 1.2)
+                linearGrad = QLinearGradient(
+                    QPoint(0, selected_handle.top()),
+                    QPoint(0, selected_handle.bottom()),
                 )
                 linearGrad.setColorAt(0, QColor("#789FCC"))
                 linearGrad.setColorAt(1, QColor("#789FCC").darker())
                 brush = QBrush(linearGrad)
                 painter.setBrush(brush)
-                painter.drawRect(exon_rect)
-                painter.drawText(exon_rect, Qt.AlignCenter, str(i))
+                painter.setPen(no_pen)
+                painter.drawEllipse(selected_handle)
+                painter.drawPolygon(
+                    QPolygon(
+                        [
+                            selected_handle.center() + QPoint(5, 0),
+                            QPoint(
+                                selected_handle.center().x(), self.area.height() / 2
+                            ),
+                            selected_handle.center() + QPoint(-5, 0),
+                        ]
+                    )
+                )
+                painter.setPen(white_pen)
+                painter.drawText(
+                    selected_handle, Qt.AlignCenter, str(self.selected_exon)
+                )
+
+            painter.restore()
 
     def _draw_cds(self, painter: QPainter):
         painter.save()
@@ -587,23 +657,26 @@ class GeneView(QAbstractScrollArea):
         else:
             if self.cursor_selects:
                 # Scroll to clicked exon
-                dna_pos = self._pixel_to_dna(
-                    self._scroll_to_pixel(
-                        event.localPos().x() - self.draw_area().left()
+                if self.selected_exon != -1:
+                    self.zoom_to_dna_interval(
+                        self.gene.exon_starts[self.selected_exon],
+                        self.gene.exon_ends[self.selected_exon],
                     )
-                )
-                if self.gene.exon_starts and self.gene.exon_ends:
-                    for start, end in zip(self.gene.exon_starts, self.gene.exon_ends):
-                        if dna_pos > start and dna_pos < end:
-                            self.zoom_to_dna_interval(start, end)
-                            return
             else:
                 super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
         if self.region:
             self.region.setRight(event.pos().x())
+
+        # Check if the mouse hovers an exon and, if so, selects it
+        if self.gene.tx_start and self.gene.tx_end:
+            pass
+        else:
+            self.selected_exon = -1
+
         self.viewport().update()
+
         super().mouseMoveEvent(event)
 
     def reset_zoom(self):
@@ -616,6 +689,7 @@ class GeneView(QAbstractScrollArea):
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if self.region:
+            self.region = self.region.normalized()
             if self.region.isEmpty():
                 # There is no selection, dna_start - dna_end is too small, zooming will make no sense
                 self.reset_zoom()
