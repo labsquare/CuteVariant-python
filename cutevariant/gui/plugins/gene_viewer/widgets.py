@@ -182,8 +182,8 @@ class Gene:
 
 
 # Defines available mouse modes:
-MOUSE_RECT_SELECT = 0  # Mouse clicking and dragging causes rectangle selection
-MOUSE_PAN = 1  # Mouse clicking and dragging causes view panning
+MOUSE_SELECT_MODE = 0  # Mouse clicking and dragging causes rectangle selection
+MOUSE_PAN_MODE = 1  # Mouse clicking and dragging causes view panning
 
 
 class GeneView(QAbstractScrollArea):
@@ -197,7 +197,7 @@ class GeneView(QAbstractScrollArea):
         # self.variants = [(117227892, "red"), (117243866, "red")]
 
         # style
-        self.cds_height = 60
+        self.cds_height = 40
         self.exon_height = 30
         self.intron_height = 20
 
@@ -214,7 +214,7 @@ class GeneView(QAbstractScrollArea):
         self.horizontalScrollBar().valueChanged.connect(self.set_translation)
 
         self.resize(640, 200)
-        QScroller.grabGesture(self.viewport(), QScroller.LeftMouseButtonGesture)
+        # QScroller.grabGesture(self.viewport(), QScroller.LeftMouseButtonGesture)
 
         self.region = None
 
@@ -223,12 +223,9 @@ class GeneView(QAbstractScrollArea):
         self.region_pen = QPen(QColor("#1E3252"))
 
         self.viewport().setMouseTracking(True)
-        self.setCursor(QCursor(Qt.CrossCursor))
 
-        self.mouse_mode = MOUSE_RECT_SELECT
+        self.mouse_mode = MOUSE_SELECT_MODE
         self.cursor_selects = False
-
-        self.selected_exon = -1
 
     @property
     def mouse_mode(self) -> int:
@@ -236,15 +233,18 @@ class GeneView(QAbstractScrollArea):
 
     @mouse_mode.setter
     def mouse_mode(self, value: int):
-        if value in (MOUSE_PAN, MOUSE_RECT_SELECT):
+
+        if value == MOUSE_SELECT_MODE:
             self._mouse_mode = value
-            if value == MOUSE_RECT_SELECT:
-                QScroller.ungrabGesture(self.viewport())
-            if value == MOUSE_PAN:
-                QScroller.grabGesture(self.viewport(), QScroller.LeftMouseButtonGesture)
+            QScroller.ungrabGesture(self.viewport())
+            self.setCursor(Qt.SplitHCursor)
+        elif value == MOUSE_PAN_MODE:
+            self._mouse_mode = value
+            QScroller.grabGesture(self.viewport(), QScroller.LeftMouseButtonGesture)
+            self.setCursor(Qt.OpenHandCursor)
         else:
             raise ValueError(
-                "Cannot set mouse mode to %s (accepted values are MOUSE_PAN,MOUSE_RECT_SELECT",
+                "Cannot set mouse mode to %s (accepted values are MOUSE_PAN_MODE,MOUSE_SELECT_MODE",
                 str(value),
             )
 
@@ -279,19 +279,14 @@ class GeneView(QAbstractScrollArea):
 
         # self.marks = []
 
-        # draw rule
-        painter.drawLine(
-            self.area.left(),
-            self.area.center().y(),
-            self.area.right(),
-            self.area.center().y(),
-        )
+        # Draw variants
+        self._draw_variants(painter)
+
+        # Draw lollipops to highlight exon selection
+        self._draw_exon_handles(painter)
 
         # Draw intron Background
         self._draw_introns(painter)
-
-        # Draw variants
-        self._draw_variants(painter)
 
         # Draw exons
         self._draw_exons(painter)
@@ -302,12 +297,10 @@ class GeneView(QAbstractScrollArea):
         # Draw rect selection region
         self._draw_region(painter)
 
-        # Draw lollipops to highlight exon selection
-        self._draw_exon_handles(painter)
-
         # Draw cursor line
-        line_x = self.mapFromGlobal(QCursor.pos()).x()
-        painter.drawLine(line_x, 0, line_x, self.rect().height())
+        # if self.mouse_mode == MOUSE_SELECT_MODE:
+        #     line_x = self.mapFromGlobal(QCursor.pos()).x()
+        #     painter.drawLine(line_x, 0, line_x, self.rect().height())
 
         painter.end()
 
@@ -395,15 +388,12 @@ class GeneView(QAbstractScrollArea):
             # Schedule rects for drawing, so we know wich one was selected before drawing it on top
             rects_to_draw = []
             mouse_hovered_handle = False
-            self.selected_exon = -1
+            self.selected_exon = None
 
             for i in range(self.gene.exon_count):
 
-                start = self._dna_to_pixel(self.gene.exon_starts[i])
-                end = self._dna_to_pixel(self.gene.exon_ends[i])
-
-                start = self._pixel_to_scroll(start)
-                end = self._pixel_to_scroll(end)
+                start = self._dna_to_scroll(self.gene.exon_starts[i])
+                end = self._dna_to_scroll(self.gene.exon_ends[i])
 
                 base = (end + start) / 2
 
@@ -412,9 +402,11 @@ class GeneView(QAbstractScrollArea):
 
                 head_rect = QRect(0, 0, head_width, head_height)
 
-                head_rect.moveTo(
-                    base - (head_width / 2) + self.area.left(),
-                    self.area.center().y() + self.cds_height + 15,
+                head_rect.moveCenter(
+                    QPoint(
+                        base + self.area.left(),
+                        self.area.center().y() + self.cds_height + 15,
+                    )
                 )
 
                 # If the head rect is outside the boundaries, do nothing
@@ -422,60 +414,87 @@ class GeneView(QAbstractScrollArea):
                     continue
 
                 # Now that the head rect is at its definitive place, let's check if the cursor hovers it (Thanks @dridk!)
-                if head_rect.contains(
-                    self.mapFromGlobal(QCursor.pos()).x(), head_rect.center().y()
-                ):
+                if head_rect.contains(self.mapFromGlobal(QCursor.pos())):
                     self.selected_exon = i
+                    rects_to_draw.insert(0, (i, head_rect))
 
-                rects_to_draw.append((i, head_rect))
-
-            selected_handle = None
-            for exon_index, handle in rects_to_draw:
-                linearGrad = QLinearGradient(
-                    QPoint(0, handle.top()), QPoint(0, handle.bottom())
-                )
-                if exon_index == self.selected_exon:
-                    selected_handle = handle
-                    continue
                 else:
-                    linearGrad.setColorAt(0, QColor("#789FCC"))
-                    linearGrad.setColorAt(1, QColor("#789FCC"))
-                # brush = QBrush(linearGrad)
-                # painter.setBrush(brush)
-                # painter.setPen(no_pen)
-                # painter.drawEllipse(handle)
-                # painter.setPen(white_pen)
-                # painter.drawText(handle, Qt.AlignCenter, str(exon_index))
+                    rects_to_draw.append((i, head_rect))
 
-            # Always draw selected handle last, no matter what
-            if selected_handle:
-                selected_handle.setWidth(selected_handle.width() * 1.2)
-                selected_handle.setHeight(selected_handle.height() * 1.2)
-                linearGrad = QLinearGradient(
-                    QPoint(0, selected_handle.top()),
-                    QPoint(0, selected_handle.bottom()),
+            for index, rect in rects_to_draw[::-1]:
+                if index == self.selected_exon:
+                    painter.setBrush(QBrush(self.palette().color(QPalette.Highlight)))
+
+                else:
+                    painter.setBrush(QBrush(QColor("white")))
+
+                pen = QPen(QColor("darkgray"))
+                pen.setWidth(2)
+                painter.setPen(pen)
+                painter.drawEllipse(rect)
+                font = QFont()
+                font.setBold(True)
+                painter.setFont(font)
+                painter.drawLine(
+                    QPoint(rect.center().x(), rect.top()),
+                    QPoint(rect.center().x(), self.draw_area().center().y()),
                 )
-                linearGrad.setColorAt(0, QColor("#789FCC"))
-                linearGrad.setColorAt(1, QColor("#789FCC").darker())
-                brush = QBrush(linearGrad)
-                painter.setBrush(brush)
-                painter.setPen(no_pen)
-                painter.drawEllipse(selected_handle)
-                painter.drawPolygon(
-                    QPolygon(
-                        [
-                            selected_handle.center() + QPoint(5, 0),
-                            QPoint(
-                                selected_handle.center().x(), self.area.height() / 2
-                            ),
-                            selected_handle.center() + QPoint(-5, 0),
-                        ]
-                    )
-                )
-                painter.setPen(white_pen)
-                painter.drawText(
-                    selected_handle, Qt.AlignCenter, str(self.selected_exon)
-                )
+
+                painter.drawText(rect, Qt.AlignCenter, str(index))
+
+            if self.selected_exon != None:
+                self.setCursor(Qt.PointingHandCursor)
+            else:
+                # Wired.. .TODO refactor
+                self.mouse_mode = self.mouse_mode
+
+            # selected_handle = None
+            # for exon_index, handle in rects_to_draw:
+            #     linearGrad = QLinearGradient(
+            #         QPoint(0, handle.top()), QPoint(0, handle.bottom())
+            #     )
+            #     if exon_index == self.selected_exon:
+            #         selected_handle = handle
+            #         continue
+            #     else:
+            #         linearGrad.setColorAt(0, QColor("#789FCC"))
+            #         linearGrad.setColorAt(1, QColor("#789FCC"))
+            #     brush = QBrush(linearGrad)
+            #     painter.setBrush(brush)
+            #     painter.setPen(no_pen)
+            #     painter.drawEllipse(handle)
+            #     painter.setPen(white_pen)
+            #     painter.drawText(handle, Qt.AlignCenter, str(exon_index))
+
+            # # Always draw selected handle last, no matter what
+            # if selected_handle:
+            #     selected_handle.setWidth(selected_handle.width() * 1.2)
+            #     selected_handle.setHeight(selected_handle.height() * 1.2)
+            #     linearGrad = QLinearGradient(
+            #         QPoint(0, selected_handle.top()),
+            #         QPoint(0, selected_handle.bottom()),
+            #     )
+            #     linearGrad.setColorAt(0, QColor("#789FCC"))
+            #     linearGrad.setColorAt(1, QColor("#789FCC").darker())
+            #     brush = QBrush(linearGrad)
+            #     painter.setBrush(brush)
+            #     painter.setPen(no_pen)
+            #     painter.drawEllipse(selected_handle)
+            #     painter.drawPolygon(
+            #         QPolygon(
+            #             [
+            #                 selected_handle.center() + QPoint(5, 0),
+            #                 QPoint(
+            #                     selected_handle.center().x(), self.area.height() / 2
+            #                 ),
+            #                 selected_handle.center() + QPoint(-5, 0),
+            #             ]
+            #         )
+            #     )
+            #     painter.setPen(white_pen)
+            #     painter.drawText(
+            #         selected_handle, Qt.AlignCenter, str(self.selected_exon)
+            #     )
 
             painter.restore()
 
@@ -553,13 +572,31 @@ class GeneView(QAbstractScrollArea):
             painter.drawRect(self.region)
             painter.restore()
 
-    def _pixel_to_dna(self, pixel: int):
+    def draw_area(self):
+        return self.viewport().rect().adjusted(10, 10, -10, -10)
 
+    def _pixel_to_dna(self, pixel: int) -> int:
+        """Convert pixel coordinate to dna
+
+        Args:
+            pixel (int): coordinate in pixel
+
+        Returns:
+            int: coordinate in dna
+        """
         tx_size = self.gene.tx_end - self.gene.tx_start
         scale = tx_size / self.area.width()
         return pixel * scale + self.gene.tx_start
 
-    def _dna_to_pixel(self, dna: int):
+    def _dna_to_pixel(self, dna: int) -> int:
+        """Convert dna coordinate to pixel
+
+        Args:
+            dna (int): coordinate in dna
+
+        Returns:
+            int: coordinate in pixel
+        """
 
         # normalize dna
         dna = dna - self.gene.tx_start
@@ -567,15 +604,43 @@ class GeneView(QAbstractScrollArea):
         scale = self.area.width() / tx_size
         return dna * scale
 
-    def _pixel_to_scroll(self, pixel):
+    def _dna_to_scroll(self, dna: int) -> int:
+        return self._pixel_to_scroll(self._dna_to_pixel(dna))
+
+    def _scroll_to_dna(self, pixel: int) -> int:
+        return self._pixel_to_dna(self._scroll_to_pixel(pixel))
+
+    def _pixel_to_scroll(self, pixel: int) -> int:
+        """Convert pixel coordinate to scroll area
+
+        Args:
+            pixel (int): Coordinate in pixel
+
+        Returns:
+            int: Return coordinate in scroll area
+        """
         return pixel * self.scale_factor - self.translation
 
-    def _scroll_to_pixel(self, pos):
+    def _scroll_to_pixel(self, pos: int) -> int:
+        """Convert scroll coordinate to pixel
+
+        Args:
+            pos (int): Coordinate from scrollarea
+
+        Returns:
+            int: Coordinate in pixel
+        """
         return (pos + self.translation) / self.scale_factor
 
     @Slot(int)
-    def set_scale(self, x):
+    def set_scale(self, x: int):
+        """Set view scale.
 
+        This method rescale the view . It makes possible to zoom in or zoom out
+
+        Args:
+            x (int): scale factor.
+        """
         self.scale_factor = x
 
         min_scroll = 0
@@ -595,15 +660,24 @@ class GeneView(QAbstractScrollArea):
 
         self.horizontalScrollBar().setValue(new)
 
-    def set_translation(self, x):
+    def set_translation(self, x: int):
+        """Set Translation
+
+        This method translate the view.
+        This method is called by scrollbar
+
+        Args:
+            x (int): translation factor between 0 and (transcript size in pixel * the scale factor)
+        """
         self.translation = x
         self.viewport().update()
 
-    def draw_area(self):
-        return self.viewport().rect().adjusted(10, 10, -10, -10)
-
     def wheelEvent(self, event):
+        """override
 
+        Zoom in or zoom out with the mouse wheel
+
+        """
         if event.delta() > 0:
             self.set_scale(self.scale_factor + 0.5)
         else:
@@ -627,57 +701,101 @@ class GeneView(QAbstractScrollArea):
 
     def keyPressEvent(self, event: QKeyEvent):
         # If any key is pressed, switch to mouse pan mode
-        if event.key() == Qt.Key_Control:
-            self.setCursor(Qt.PointingHandCursor)
-            self.cursor_selects = True
-            self.mouse_mode = MOUSE_PAN
 
-        if event.key() == Qt.Key_Shift:
-            self.setCursor(Qt.OpenHandCursor)
-            self.cursor_selects = False
-            self.mouse_mode = MOUSE_PAN
+        super().keyPressEvent(event)
+
+        # if event.key() == Qt.Key_Control:
+        #     self.setCursor(Qt.PointingHandCursor)
+        #     self.cursor_selects = True
+        #     self.mouse_mode = MOUSE_PAN_MODE
+
+        # if event.key() == Qt.Key_Shift:
+        #     self.setCursor(Qt.OpenHandCursor)
+        #     self.cursor_selects = False
+        #     self.mouse_mode = MOUSE_PAN_MODE
+
+    def event(self, event):
+
+        # Change cursor when gesture in panning ...
+        if event.type() == QEvent.Gesture:
+            for g in event.gestures():
+                if g.state() == Qt.GestureUpdated:
+                    self.setCursor(Qt.ClosedHandCursor)
+                else:
+                    self.setCursor(Qt.OpenHandCursor)
+
+        super().event(event)
 
     def keyReleaseEvent(self, event: QKeyEvent):
-        self.setCursor(Qt.CrossCursor)
-        # Reset mouse mode to rect select (the default)
-        self.mouse_mode = MOUSE_RECT_SELECT
-        self.cursor_selects = False
+
+        super().keyReleaseEvent(event)
+        # self.setCursor(Qt.CrossCursor)
+        # # Reset mouse mode to rect select (the default)
+        # self.mouse_mode = MOUSE_SELECT_MODE
+        # self.cursor_selects = False
 
     def mousePressEvent(self, event: QMouseEvent):
 
-        if self.mouse_mode == MOUSE_RECT_SELECT:
-            self.region = QRect()
-            self.region.setHeight(self.viewport().height())
-            self.region.setLeft(event.pos().x())
-            event.accept()
+        if self.selected_exon != None:
+            self.zoom_to_dna_interval(
+                self.gene.exon_starts[self.selected_exon],
+                self.gene.exon_ends[self.selected_exon],
+            )
 
-            return
+        if self.mouse_mode == MOUSE_SELECT_MODE:
 
-        # Depending on the cursor position, different actions on click
-        else:
-            if self.cursor_selects:
-                # Scroll to clicked exon
-                if self.selected_exon != -1:
-                    self.zoom_to_dna_interval(
-                        self.gene.exon_starts[self.selected_exon],
-                        self.gene.exon_ends[self.selected_exon],
-                    )
-            else:
-                super().mousePressEvent(event)
+            if event.button() == Qt.LeftButton:
+                self.region = QRect(0, 0, 0, 0)
+                self.region.setHeight(self.viewport().height())
+                self.region.setLeft(event.pos().x())
+                self.region.setRight(event.pos().x())
+
+            if event.button() == Qt.RightButton:
+                self.reset_zoom()
+
+        super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
+
         if self.region:
             self.region.setRight(event.pos().x())
 
-        # Check if the mouse hovers an exon and, if so, selects it
-        if self.gene.tx_start and self.gene.tx_end:
-            pass
-        else:
-            self.selected_exon = -1
+        # # Check if the mouse hovers an exon and, if so, selects it
+        # if self.gene.tx_start and self.gene.tx_end:
+        #     pass
+        # else:
+        #     self.selected_exon = -1
 
         self.viewport().update()
 
         super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+
+        if self.region:
+            if self.region.normalized().width() < 5:
+                self.region = None
+                return
+
+            self.region = self.region.normalized()
+
+            if self.region.isEmpty():
+                # There is no selection, dna_start - dna_end is too small, zooming will make no sense
+                self.reset_zoom()
+            else:
+                dna_start = self._scroll_to_dna(
+                    self.region.left() - self.draw_area().left()
+                )
+
+                dna_end = self._scroll_to_dna(
+                    self.region.right() - self.draw_area().left()
+                )
+
+                print(self.region.width())
+                self.zoom_to_dna_interval(dna_start, dna_end)
+                self.region = None
+
+        super().mouseReleaseEvent(event)
 
     def reset_zoom(self):
         """Resets viewer zoom."""
@@ -687,40 +805,18 @@ class GeneView(QAbstractScrollArea):
             self.set_scale(1)
             self.set_translation(0)
 
-    def mouseReleaseEvent(self, event: QMouseEvent):
-        if self.region:
-            self.region = self.region.normalized()
-            if self.region.isEmpty():
-                # There is no selection, dna_start - dna_end is too small, zooming will make no sense
-                self.reset_zoom()
-            else:
-                dna_start = self._pixel_to_dna(
-                    self._scroll_to_pixel(
-                        self.region.normalized().left() - self.draw_area().left()
-                    )
-                )
-                dna_end = self._pixel_to_dna(
-                    self._scroll_to_pixel(
-                        self.region.normalized().right() - self.draw_area().left()
-                    )
-                )
-                self.zoom_to_dna_interval(dna_start, dna_end)
-            self.region = None
-            self.viewport().update()
-        super().mouseReleaseEvent(event)
-
 
 class GeneViewerWidget(plugin.PluginWidget):
     """Exposed class to manage VQL/SQL queries from the mainwindow"""
 
-    LOCATION = plugin.FOOTER_LOCATION
+    # LOCATION = plugin.FOOTER_LOCATION
     ENABLE = True
     REFRESH_ONLY_VISIBLE = False
 
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        self.annotations_file_name = "/home/charles/refGene.db"
+        self.annotations_file_name = "/home/sacha/refGene.db"
 
         self.setWindowTitle(self.tr("Gene Viewer"))
 
@@ -782,15 +878,21 @@ class GeneViewerWidget(plugin.PluginWidget):
 
         # gene = self.combo.currentText()
 
-        self.current_variant = self.mainwindow.state.current_variant
-        gene = self.current_variant["ann.gene"]
+        self.current_variant = sql.get_one_variant(
+            self.conn,
+            self.mainwindow.state.current_variant["id"],
+            with_annotations=True,
+        )
+
+        gene = self.current_variant["annotations"][0]["gene"]
+
         self.combo.blockSignals(True)
         self.combo.setCurrentText(gene)
         self.combo.blockSignals(False)
 
         filters = copy.deepcopy(self.mainwindow.state.filters)
 
-        fields = ["pos"]
+        fields = ["pos", "ann.gene"]
 
         # TODO: What if the filters have an '$or' operator as a root ?
         if "$and" not in filters:
@@ -860,19 +962,20 @@ if __name__ == "__main__":
     import os
 
     # try:
-    #     os.remove("/home/charles/refGene.db")
+    #     os.remove("/home/sacha/refGene.db")
     # except:
     #     pass
 
-    # refGene_to_sqlite("/home/charles/refGene.txt.gz", "/home/charles/refGene.db")
+    # refGene_to_sqlite("/home/sacha/refGene.txt.gz", "/home/sacha/refGene.db")
 
     app = QApplication(sys.argv)
 
     view = GeneView()
     view.show()
+    view.resize(600, 500)
 
     annotations_conn = sqlite3.connect(
-        "/home/charles/refGene.db", detect_types=sqlite3.PARSE_DECLTYPES
+        "/home/sacha/refGene.db", detect_types=sqlite3.PARSE_DECLTYPES
     )
     annotations_conn.row_factory = sqlite3.Row
     gene_data = dict(
@@ -880,6 +983,7 @@ if __name__ == "__main__":
             "SELECT transcript,tx_start,tx_end,cds_start,cds_end,exon_starts,exon_ends,gene FROM refGene WHERE gene = 'GJB2'"
         ).fetchone()
     )
+
     # self.view.gene.tx_start = gene_data["tx_start"]
     # self.view.gene.tx_end = gene_data["tx_end"]
     # self.view.gene.cds_start = gene_data["cds_start"]
@@ -893,6 +997,15 @@ if __name__ == "__main__":
         for attr_name in gene_data
         if hasattr(view.gene, attr_name)
     ]
+
+    variants = [
+        (view.gene.tx_start + 1000, 0),
+        (view.gene.tx_start + 2000, 0),
+        (view.gene.tx_start + 3000, 1),
+    ]
+
+    view.gene.variants = variants
+
     view.viewport().update()
 
     app.exec_()
