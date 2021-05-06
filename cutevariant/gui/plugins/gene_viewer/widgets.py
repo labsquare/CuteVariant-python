@@ -181,6 +181,11 @@ class Gene:
         return self._exon_count
 
 
+# Defines available mouse modes:
+MOUSE_RECT_SELECT = 0  # Mouse clicking and dragging causes rectangle selection
+MOUSE_PAN = 1  # Mouse clicking and dragging causes view panning
+
+
 class GeneView(QAbstractScrollArea):
     """A class to visualize variants on a gene diagram, showing introns, exons, and coding sequence."""
 
@@ -213,12 +218,41 @@ class GeneView(QAbstractScrollArea):
 
         self.region = None
 
-        self.region_brush = QBrush(QColor("#5094CB"))
-        self.region_brush.setStyle(Qt.Dense4Pattern)
+        self.region_brush = QBrush(QColor("#5094CB80"))
+        # self.region_brush.setStyle(Qt.Dense4Pattern)
         self.region_pen = QPen(QColor("#1E3252"))
 
         self.viewport().setMouseTracking(True)
         self.setCursor(QCursor(Qt.CrossCursor))
+
+        self.mouse_mode = MOUSE_RECT_SELECT
+        self.cursor_selects = False
+
+    @property
+    def mouse_mode(self) -> int:
+        return self._mouse_mode
+
+    @mouse_mode.setter
+    def mouse_mode(self, value: int):
+        if value in (MOUSE_PAN, MOUSE_RECT_SELECT):
+            self._mouse_mode = value
+            if value == MOUSE_RECT_SELECT:
+                QScroller.ungrabGesture(self.viewport())
+            if value == MOUSE_PAN:
+                QScroller.grabGesture(self.viewport(), QScroller.LeftMouseButtonGesture)
+        else:
+            raise ValueError(
+                "Cannot set mouse mode to %s (accepted values are MOUSE_PAN,MOUSE_RECT_SELECT",
+                str(value),
+            )
+
+    @property
+    def cursor_selects(self) -> bool:
+        return self._cursor_selects
+
+    @cursor_selects.setter
+    def cursor_selects(self, value: bool):
+        self._cursor_selects = value
 
     def paintEvent(self, event: QPaintEvent):
 
@@ -262,7 +296,12 @@ class GeneView(QAbstractScrollArea):
         # Draw CDS
         self._draw_cds(painter)
 
+        # Draw rect selection region
         self._draw_region(painter)
+
+        # Draw cursor line
+        line_x = self.mapFromGlobal(QCursor.pos()).x()
+        painter.drawLine(line_x, 0, line_x, self.draw_area().height())
 
         painter.end()
 
@@ -315,6 +354,39 @@ class GeneView(QAbstractScrollArea):
 
                 start = self._pixel_to_scroll(start)
                 end = self._pixel_to_scroll(end)
+
+                # for m in self.marks:
+                #     print("mark", m)
+                #     painter.drawLine(m, 0, m, self.area.bottom())
+
+                # draw exons
+                exon_rect = QRect(0, 0, end - start, self.exon_height)
+                exon_rect.moveTo(
+                    start + self.area.left(),
+                    self.area.center().y() - self.exon_height / 2,
+                )
+
+                linearGrad = QLinearGradient(
+                    QPoint(0, exon_rect.top()), QPoint(0, exon_rect.bottom())
+                )
+                linearGrad.setColorAt(0, QColor("#789FCC"))
+                linearGrad.setColorAt(1, QColor("#789FCC").darker())
+                brush = QBrush(linearGrad)
+                painter.setBrush(brush)
+                painter.drawRect(exon_rect)
+
+    def _draw_exon_handles(self, painter: QPainter):
+        if self.gene.exon_count:
+            painter.setClipRect(self.area)
+            for i in range(self.gene.exon_count):
+
+                start = self._dna_to_pixel(self.gene.exon_starts[i])
+                end = self._dna_to_pixel(self.gene.exon_ends[i])
+
+                start = self._pixel_to_scroll(start)
+                end = self._pixel_to_scroll(end)
+
+                base = (end - start) / 2
 
                 # for m in self.marks:
                 #     print("mark", m)
@@ -483,9 +555,27 @@ class GeneView(QAbstractScrollArea):
         self.horizontalScrollBar().setValue(self._dna_to_pixel(start) * scale)
         self.viewport().update()
 
+    def keyPressEvent(self, event: QKeyEvent):
+        # If any key is pressed, switch to mouse pan mode
+        if event.key() == Qt.Key_Control:
+            self.setCursor(Qt.PointingHandCursor)
+            self.cursor_selects = True
+            self.mouse_mode = MOUSE_PAN
+
+        if event.key() == Qt.Key_Shift:
+            self.setCursor(Qt.OpenHandCursor)
+            self.cursor_selects = False
+            self.mouse_mode = MOUSE_PAN
+
+    def keyReleaseEvent(self, event: QKeyEvent):
+        self.setCursor(Qt.CrossCursor)
+        # Reset mouse mode to rect select (the default)
+        self.mouse_mode = MOUSE_RECT_SELECT
+        self.cursor_selects = False
+
     def mousePressEvent(self, event: QMouseEvent):
 
-        if event.modifiers() == Qt.ControlModifier:
+        if self.mouse_mode == MOUSE_RECT_SELECT:
             self.region = QRect()
             self.region.setHeight(self.viewport().height())
             self.region.setLeft(event.pos().x())
@@ -493,28 +583,27 @@ class GeneView(QAbstractScrollArea):
 
             return
 
+        # Depending on the cursor position, different actions on click
         else:
-            super().mousePressEvent(event)
-
-            # Scroll to clicked exon
-            dna_pos = self._pixel_to_dna(
-                self._scroll_to_pixel(event.localPos().x() - self.draw_area().left())
-            )
-            if self.gene.exon_starts and self.gene.exon_ends:
-                for start, end in zip(self.gene.exon_starts, self.gene.exon_ends):
-                    if dna_pos > start and dna_pos < end:
-                        self.zoom_to_dna_interval(start, end)
-                        return
-
-        # print("mark")
-        # self.marks.append(self.horizontalScrollBar().value())
-        # self.viewport().update()
+            if self.cursor_selects:
+                # Scroll to clicked exon
+                dna_pos = self._pixel_to_dna(
+                    self._scroll_to_pixel(
+                        event.localPos().x() - self.draw_area().left()
+                    )
+                )
+                if self.gene.exon_starts and self.gene.exon_ends:
+                    for start, end in zip(self.gene.exon_starts, self.gene.exon_ends):
+                        if dna_pos > start and dna_pos < end:
+                            self.zoom_to_dna_interval(start, end)
+                            return
+            else:
+                super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
         if self.region:
             self.region.setRight(event.pos().x())
-            self.viewport().update()
-            return
+        self.viewport().update()
         super().mouseMoveEvent(event)
 
     def reset_zoom(self):
@@ -527,17 +616,21 @@ class GeneView(QAbstractScrollArea):
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if self.region:
-            dna_start = self._pixel_to_dna(
-                self._scroll_to_pixel(
-                    self.region.normalized().left() - self.draw_area().left()
+            if self.region.isEmpty():
+                # There is no selection, dna_start - dna_end is too small, zooming will make no sense
+                self.reset_zoom()
+            else:
+                dna_start = self._pixel_to_dna(
+                    self._scroll_to_pixel(
+                        self.region.normalized().left() - self.draw_area().left()
+                    )
                 )
-            )
-            dna_end = self._pixel_to_dna(
-                self._scroll_to_pixel(
-                    self.region.normalized().right() - self.draw_area().left()
+                dna_end = self._pixel_to_dna(
+                    self._scroll_to_pixel(
+                        self.region.normalized().right() - self.draw_area().left()
+                    )
                 )
-            )
-            self.zoom_to_dna_interval(dna_start, dna_end)
+                self.zoom_to_dna_interval(dna_start, dna_end)
             self.region = None
             self.viewport().update()
         super().mouseReleaseEvent(event)
