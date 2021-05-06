@@ -1277,6 +1277,9 @@ class VariantViewWidget(plugin.PluginWidget):
     # Emitted when the variants are both counted and loaded in the view. Provides the variants count and the elapsed time (in seconds) to execute the query
     variants_load_finished = Signal(int, float)
 
+    # Emitted when a variant is selected in the view. The data is available in mainwindow.state
+    variant_changed = Signal()
+
     ENABLE = True
 
     def __init__(self, parent=None):
@@ -1533,11 +1536,13 @@ class VariantViewWidget(plugin.PluginWidget):
             # Variant clicked on right pane
             variant = self.main_right_pane.model.variant(index.row())
 
-        if self.mainwindow:
+        if self.mainwindow and variant:
             self.mainwindow.state.current_variant = variant
             # Request a refresh of the variant_info plugin
             self.mainwindow.refresh_plugin("variant_info")
-            self.mainwindow.refresh_plugin("gene_viewer")
+
+            # Notify that this plugin has new variant data
+            self.variant_changed.emit()
 
     def _refresh_vql_editor(self):
         """Force refresh of vql_editor if loaded"""

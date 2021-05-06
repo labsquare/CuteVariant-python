@@ -217,6 +217,9 @@ class GeneView(QAbstractScrollArea):
         self.region_brush.setStyle(Qt.Dense4Pattern)
         self.region_pen = QPen(QColor("#1E3252"))
 
+        self.viewport().setMouseTracking(True)
+        self.setCursor(QCursor(Qt.CrossCursor))
+
     def paintEvent(self, event: QPaintEvent):
 
         painter = QPainter()
@@ -227,6 +230,15 @@ class GeneView(QAbstractScrollArea):
         # draw guide
         self.area = self.draw_area()
         painter.drawRect(self.area.adjusted(-2, -2, 2, 2))
+
+        if not (self.gene.tx_start and self.gene.tx_end):
+            painter.drawText(
+                self.area,
+                Qt.AlignCenter,
+                self.tr("No gene selected. Please chose one in the combobox"),
+            )
+            painter.end()
+            return
 
         # self.marks = []
 
@@ -248,7 +260,7 @@ class GeneView(QAbstractScrollArea):
         self._draw_exons(painter)
 
         # Draw CDS
-        # self._draw_cds(painter)
+        self._draw_cds(painter)
 
         self._draw_region(painter)
 
@@ -387,6 +399,7 @@ class GeneView(QAbstractScrollArea):
                 brush = QBrush(linearGrad)
                 painter.setBrush(brush)
                 painter.drawRect(cds_rect)
+                painter.drawText(cds_rect, Qt.AlignCenter, str(i))
 
         painter.restore()
 
@@ -471,6 +484,7 @@ class GeneView(QAbstractScrollArea):
         self.viewport().update()
 
     def mousePressEvent(self, event: QMouseEvent):
+
         if event.modifiers() == Qt.ControlModifier:
             self.region = QRect()
             self.region.setHeight(self.viewport().height())
@@ -502,6 +516,14 @@ class GeneView(QAbstractScrollArea):
             self.viewport().update()
             return
         super().mouseMoveEvent(event)
+
+    def reset_zoom(self):
+        """Resets viewer zoom."""
+        if self.gene:
+            self.zoom_to_dna_interval(self.gene.tx_start, self.gene.tx_end)
+        else:
+            self.set_scale(1)
+            self.set_translation(0)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if self.region:
@@ -568,7 +590,7 @@ class GeneViewerWidget(plugin.PluginWidget):
         # # ------------------------------------- End setting up set mouse exon select action
 
         self.toolbar.addAction(
-            FIcon(0xF1276), self.tr("Reset zoom"), lambda: self.view.set_scale(1)
+            FIcon(0xF1276), self.tr("Reset zoom"), lambda: self.view.reset_zoom()
         )
         self.toolbar.addWidget(self.combo)
 

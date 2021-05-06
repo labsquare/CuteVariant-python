@@ -42,6 +42,7 @@ class MainWindow(QMainWindow):
     """Main window of Cutevariant"""
 
     variants_load_finished = Signal(int, float)
+    selected_variant_changed = Signal()
 
     def __init__(self, parent=None):
 
@@ -168,12 +169,17 @@ class MainWindow(QMainWindow):
             widget.setDisabled(True)
 
             """Variant view is a special widget that loads variants and counts them.
-            Every plugin should be warned whenever the variants get loaded, so we need to connect variant view's signals to mainwindow's signals"""
+            Every plugin should be warned whenever the variants get loaded, so we need to connect variant view's signals to mainwindow's signals
+            Variant view should also tell whenever a variant has been selected in the view
+            """
             if name == "variant_view":
 
                 LOGGER.debug("Loading variant view")
                 widget.variants_load_finished.connect(
                     lambda count, time: self.variants_load_finished.emit(count, time)
+                )
+                widget.variant_changed.connect(
+                    lambda: self.selected_variant_changed.emit
                 )
                 LOGGER.debug("Connected variant view signals to mainwindow")
 
